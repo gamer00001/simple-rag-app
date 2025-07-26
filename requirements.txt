@@ -1,0 +1,8 @@
+pandas
+faiss-cpu
+sentence-transformers
+streamlit
+python-dotenv
+google-generativeai==0.2.0
+langchain
+langchain-community
