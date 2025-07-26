@@ -6,27 +6,52 @@ import streamlit as st
 from dotenv import load_dotenv
 import re
 
+import faiss
+import pickle
+
+index = faiss.read_index("outage_index.faiss")
+
+with open("outage_metadata.pkl", "rb") as f:
+    df = pickle.load(f)
+
 # Embedding model
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Normalize text
 def normalize_text(text):
     text = text.lower()
-    text = re.sub(r"&|,|/|\\", " and ", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    text = re.sub(r"[&/\\,;-]", " ", text)  # replace common delimiters with space
+    text = re.sub(r"([a-z]+)(\d+)", r"\1 \2", text)  # add space between unit and number
+    text = re.sub(r"\s+", " ", text).strip()  # remove extra whitespace
+    return text
 
-# Load data
-df = pd.read_csv("Outage Handling - handling_data.csv")
-df["Outage_norm"] = df["Outage"].apply(normalize_text)
-Outage_texts = df["Outage_norm"].tolist()
 
-# Embed outage descriptions
-Outage_embeddings = embedding_model.encode(Outage_texts)
+def extract_units(text):
+    text = normalize_text(text)
 
-# Create FAISS index
-index = faiss.IndexFlatL2(Outage_embeddings[0].shape[0])
-index.add(np.array(Outage_embeddings))
+    # Match combined formats like "uet12" or "shr12"
+    combined_matches = re.findall(r"(uet|shr)\s*\d{1,2}", text)
+    combined_units = re.findall(r"(uet|shr)\s*\d{1,2}", text)
+    explicit_units = re.findall(r"(uet|shr)\s*\d{1,2}", text)
+    
+    # Extract full matches like "uet12", then split into "uet 12"
+    explicit_units = []
+    for match in re.findall(r"(uet|shr)\s*\d{1,2}", text):
+        unit = re.search(rf"({match})\s*(\d{{1,2}})", text)
+        if unit:
+            explicit_units.append(f"{match} {unit.group(2)}")
+
+    # Match grouped formats like "uet 1 2" or "shr 3 4"
+    group_units = []
+    for prefix in ["uet", "shr"]:
+        match = re.search(rf"{prefix}\s*((?:\d{{1,2}}\s*)+)", text)
+        if match:
+            nums = re.findall(r"\d{1,2}", match.group(1))
+            group_units.extend([f"{prefix} {n}" for n in nums])
+
+    all_units = set(explicit_units + group_units)
+    return sorted(all_units)
+
+
 
 # Query Gemini with matched entries
 # def query_gemini_multi(results, user_query):
@@ -86,20 +111,31 @@ def query_gemini_multi(results, user_query):
 # Semantic search + LLM response
 def search_and_respond(user_query, top_k=1):
     user_query_norm = normalize_text(user_query)
+    user_units = extract_units(user_query_norm)
+
     user_embedding = embedding_model.encode([user_query_norm])
     distances, indices = index.search(np.array(user_embedding), k=top_k)
 
     results = []
     for idx in indices[0]:
         row = df.iloc[idx]
+        outage_units = extract_units(row["Outage"])
+        overlap = len(set(user_units) & set(outage_units))
+
         results.append({
             "Outage": row["Outage"],
             "impact": row["Impact"],
-            "handling": row["Handling"]
+            "handling": row["Handling"],
+            "score": overlap  # unit overlap score
         })
 
-    response = query_gemini_multi(results, user_query)
-    return results, response
+    # Fallback: Prefer rows with highest overlap
+    results.sort(key=lambda r: r["score"], reverse=True)
+    top_results = results[:1] if results and results[0]["score"] > 0 else results[:1]
+
+    response = query_gemini_multi(top_results, user_query)
+    return top_results, response
+
 
 # Streamlit UI
 st.title("Outage Handler")
