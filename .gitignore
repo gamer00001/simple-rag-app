@@ -1,3 +1,4 @@
 ragenv
 .env
 *.csv
+venv

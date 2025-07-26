@@ -4,22 +4,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 import streamlit as st
 from dotenv import load_dotenv
-import os
 import re
-
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage
-
-# Load environment variables
-load_dotenv()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-# Configure Gemini LLM via LangChain
-llm = ChatGoogleGenerativeAI(
-    model="models/gemini-1.5-flash",
-    google_api_key=GEMINI_API_KEY,
-    temperature=0.3
-)
 
 # Embedding model
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
